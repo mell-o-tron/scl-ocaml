@@ -1,0 +1,3 @@
+(library
+ (name scl)
+ (preprocess  (pps ppx_deriving.show ppx_compare)))
