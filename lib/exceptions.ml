@@ -1,2 +1,3 @@
 exception GoToNextRule of string
 exception FoundRefutation
+exception CannotUnify

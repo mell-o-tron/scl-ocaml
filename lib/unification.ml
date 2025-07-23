@@ -1,71 +1,115 @@
 open Ast
+open Exceptions
 
 (** Apply a substitution to a term *)
-let rec apply_term (sigma : subst) (t : term) : term =
-  match t with
+let rec apply_subst_term (s : subst) (t : term) = match t with
+  | Var v -> (try StringMap.find v s with _ -> Var v)
+  | Func (n, tl) -> Func (n, List.map (apply_subst_term s) tl)
   | Const _ -> t
-  | Var x ->
-    (match StringMap.find_opt x sigma with
-     | None   -> t
-     | Some t' -> apply_term sigma t')
-  | Func(f, args) ->
-    Func(f, List.map (apply_term sigma) args)
 
-(** Compose two substitutions: sigma₂ ∘ sigma₁, meaning apply sigma₁ then sigma₂ *)
+(** sigma2 AFTER sigma1 *)
 let compose (sigma2 : subst) (sigma1 : subst) : subst =
-  let sigma1' = StringMap.map (apply_term sigma2) sigma1 in
+  let sigma1' = StringMap.map (apply_subst_term sigma2) sigma1 in
   StringMap.union (fun _ t1 _ -> Some t1) sigma1' sigma2
 
-(** Occurs-check: does variable x occur inside term t? *)
-let rec occurs (x : string) (t : term) : bool =
-  match t with
-  | Const _      -> false
-  | Var y        -> x = y
-  | Func(_, args) ->
-    List.exists (occurs x) args
+(** deletes all equalities between equal terms *)
+let delete (eqs : (term * term) list) = 
+  List.filter (fun (t1, t2) -> not(t1 = t2)) eqs
 
-(** Unify two terms under current substitution sigma, returning an updated sigma or failure *)
-let rec unify_term (sigma : subst) (s : term) (t : term) : subst option =
-  let s = apply_term sigma s in
-  let t = apply_term sigma t in
-  match (s, t) with
-  | Const a, Const b when a = b ->
-    Some sigma
-  | Var x, t
-  | t, Var x ->
-    if t = Var x then Some sigma
-    else if occurs x t then
-      None  (* would create infinite term *)
-    else
-      Some (StringMap.add x t sigma)
-  | Func(f, ss), Func(g, ts)
-    when f = g && List.length ss = List.length ts ->
-    unify_terms sigma ss ts
-  | _ ->
-    None
+(** generates new equalities from function eqs *)
+let decompose (eqs : (term * term) list) = 
+  let aux (t1, t2) = match t1, t2 with
+  Func (n1, l1) , Func (n2, l2) when n1 = n2 && List.length l1 = List.length l2 ->  
+    List.map2 (fun t1 t2 -> (t1, t2)) l1 l2
+  | _ -> [(t1, t2)]
+  in
+  List.map aux eqs |> List.flatten
 
-(** Unify two lists of terms pairwise *)
-and unify_terms (sigma : subst) (ss : term list) (ts : term list) : subst option =
-  match (ss, ts) with
-  | [], [] -> Some sigma
-  | s::ss', t::ts' ->
-    (match unify_term sigma s t with
-     | None    -> None
-     | Some sigma' -> unify_terms sigma' ss' ts')
-  | _ -> None  (* arity mismatch *)
+(** Brings variables to the left *)
+let swap (eqs : (term * term) list) = 
+  let aux ((t1, t2) : term * term) = match (t1, t2) with
+    | (Const _ | Func _), Var _ -> (t2, t1)
+    | _ -> (t1, t2)
+in List.map aux eqs
 
-(** Unify two atoms: same predicate name and arity *)
-let unify_atom (sigma : subst) (Atom(p, ss)) (Atom(q, ts)) : subst option =
-  if p = q && List.length ss = List.length ts then
-    unify_terms sigma ss ts
-  else
-    None
+(** substitutes variable x with term t in set eqs *)
+let subst_in_eqset (x : string) (t : term) (eqs : (term * term) list) = 
+  let rec aux (t1 :  term) = match (t1) with
+    | Var y -> if x = y then t else t1
+    | Const _ -> t1
+    | Func (n, l) -> Func (n, List.map aux l)
+  in
+  List.map (fun (t1, t2) -> (aux t1, aux t2)) eqs 
 
-(** Unify two literals. *)
-let unify_literal (sigma : subst) (l1 : literal) (l2 : literal) : subst option =
-  match (l1, l2) with
-  | Pos a1, Pos a2
-  | Neg a1, Neg a2 ->
-    unify_atom sigma a1 a2
-  | _ ->
-    None
+let rec term_vars (t : term) = match t with
+  | Var y -> [y]
+  | Const _ -> []
+  | Func (_, l) -> List.map (term_vars) l |> List.flatten
+
+let eqs_vars (eqs : (term * term) list) = 
+  List.map (fun (t1, t2) -> term_vars t1 @ term_vars t2) eqs |> List.flatten
+
+let is_var t = match t with
+  | Var _ -> true
+  | _ -> false
+
+let is_in_varlist (t : term) (vl : string list) = match t with
+| Var x -> List.mem x vl 
+| _ -> failwith "term is not a variable"
+
+let get_var_name (t : term) = match t with
+| Var x -> x
+| _ -> failwith "term is not a variable"
+
+(** Subsitutes variables found in equalities *)
+let eliminate (eqs : (term * term) list) = 
+  try
+    let pair = List.find (fun (t1, t2) -> is_var t1 && is_in_varlist t1 (eqs_vars eqs) && not(is_in_varlist t1 (term_vars t2))) eqs in
+    let rest = List.filter (fun p -> not (p = pair)) eqs in
+    pair :: subst_in_eqset (get_var_name (fst pair)) (snd pair) rest
+  with Not_found -> eqs
+
+let term_conflict t1 t2 = match t1, t2 with
+  | Func (n1, l1), Func (n2, l2) -> 
+    if n1 = n2 && List.length l1 = List.length l2 then false else true
+  | Const a, Const b -> if a = b then false else true
+  | _ -> false
+
+let conflict (eqs : (term * term) list) = 
+  if (List.exists (fun (t1, t2) -> term_conflict t1 t2) eqs) then raise CannotUnify else eqs
+
+let occur_check (eqs : (term * term) list) = 
+  if List.exists (fun (t1, t2) -> is_var t1 && is_in_varlist t1 (term_vars t2)) eqs then 
+  raise CannotUnify else eqs
+
+  
+let rec unify_equalities (eqs : (term * term) list) =  
+  let aux (eqs : (term * term) list) = 
+    let eqs = delete eqs in
+    let eqs = decompose eqs in
+    let eqs = swap eqs in
+    let eqs = eliminate eqs in
+    let eqs = conflict eqs in
+    occur_check eqs
+  in 
+  try 
+  let res = aux eqs in
+  if res = eqs then (Some res) else unify_equalities res
+  with CannotUnify -> None
+
+let unify_literal l1 l2 = 
+
+  Printf.printf "trying to unify literals: %s, %s\n" (pretty_lit l1) (pretty_lit l2);
+
+let pairlistopt = match l1, l2 with
+| Pos (Atom (n1, tl1)), Pos (Atom (n2, tl2)) when 
+  n1 = n2 && List.length tl1 = List.length tl2 -> unify_equalities (List.map2 (fun t1 t2 -> (t1, t2)) tl1 tl2)
+| Neg (Atom (n1, tl1)), Neg (Atom (n2, tl2)) when 
+  n1 = n2 && List.length tl1 = List.length tl2 -> unify_equalities (List.map2 (fun t1 t2 -> (t1, t2)) tl1 tl2)
+| _ -> None
+
+in if Option.is_some pairlistopt then 
+  let listopt = Option.get pairlistopt in
+  let listopt = List.map (fun (t1, t2) -> (get_var_name t1, t2)) listopt in
+  Some (listopt |> StringMap.of_list)
+else None

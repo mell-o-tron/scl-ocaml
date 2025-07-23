@@ -142,10 +142,19 @@ let is_true_in_trail (c : clause) (trail : (literal * annot) list) =
   List.for_all (fun l -> List.mem l trail || not (List.mem (lit_neg l) trail)) c
 
 (** Auxiliary function for the propagate rule. Attempts to split a given ground clause. *)
-let try_split_ground_clause (c: clause) (trail : (literal * annot) list) = 
+let try_split_ground_clause (c: clause) (s : subst) (trail : (literal * annot) list) = 
   (* removes duplicated literals *)
   let c = dedup c in
-  let splits = remove_one c in
+  
+  (* singles out one literal from the clause *)
+  let splits : (clause * literal) list = remove_one c in
+
+  (* for each split (c, l), finds the terms in c that are equal to l mod sigma, removes them *)
+  let remove_equal_mod_s ((c, l) : clause * literal) = 
+    let equal_mod_s l1 l2 = (apply_subst_lit s l1 = apply_subst_lit s l2) in
+    (List.filter (fun l' -> not(equal_mod_s l l')) c, l)
+  in
+  let splits = List.map remove_equal_mod_s splits in
   (* finds a split such that c0 is false in the trail, and l is undefined in the trail*)
   try (Some (List.find (fun (c0, l) -> not(is_true_in_trail c0 trail) && not(is_in_trail trail l)) splits)) with Not_found -> None
 
@@ -167,7 +176,7 @@ let try_split_clause (c: clause) (trail : (literal * annot) list) (b : literal)=
     try 
       let result = ref None in
       let sub = ref StringMap.empty in
-      let _ = List.find (fun (cl, s) -> result := try_split_ground_clause cl trail; sub := s; Option.is_some !result) gndleqb in
+      let _ = List.find (fun (cl, s) -> result := try_split_ground_clause cl s trail; sub := s; Option.is_some !result) gndleqb in
       !result, gndleqb, sub
     with Not_found -> None, gndleqb, ref StringMap.empty
   in
@@ -224,6 +233,8 @@ let conflict (state : scl_state) =
   (* TODO How to limit the depth? Also use beta? *)
   try Option.get (aux state 10) with _ -> raise (GoToNextRule "could not create conflict")
 
+let clause_mem l c = List.mem l c
+
 (** Skip rule: if a literal in the trail is not present in the conflict clause, skip it*)
 let skip (state : scl_state) = 
 
@@ -233,12 +244,12 @@ let skip (state : scl_state) =
     | Top -> failwith "not in conflict state" in
   match state.trail with
   | (l, Level (_)) :: rest -> 
-    if not(List.mem (lit_neg l) d) then 
+    if not(clause_mem (lit_neg l) d) then 
       let _ = Printf.printf "%s is not a member of %s.\n" (pretty_lit (lit_neg l)) (pretty_clause d) in
       {state with trail = rest; decision_level = state.decision_level - 1} else raise (GoToNextRule "nothing to skip")
   | (l, Pred _) :: rest -> 
-      if not(List.mem l d) then 
-        let _ = Printf.printf "%s is not a member of %s.\n" (pretty_lit l) (pretty_clause d) in
+      if not(clause_mem (lit_neg l) d) then 
+        let _ = Printf.printf "%s is not a member of %s.\n" (pretty_lit (lit_neg l)) (pretty_clause d) in
         {state with trail = rest} else raise (GoToNextRule "nothing to skip")
   | _ -> raise (GoToNextRule "nothing to skip")
 
@@ -262,7 +273,7 @@ let factorize (state : scl_state) =
   (* for each pair of literals, check if they can be unified and unify them *)
   let mgu = ref None in
   let l1 = try (List.find (fun l1 -> List.exists (fun l2 -> l2 != l1 && (
-  let mgu_found = (unify_literal (StringMap.empty) l1 l2) in  
+  let mgu_found = (unify_literal l1 l2) in  
     mgu := mgu_found ; Option.is_some mgu_found) ) c) c) with Not_found -> raise (GoToNextRule "could not factorize") in
 
   let d = remove_first l1 c in 
@@ -294,10 +305,11 @@ let resolve (state : scl_state) = match state.trail with
       | Top -> failwith "not in conflict state" in
     let mgu = ref None in
     let l' = try
-      List.find (fun l' -> (ldelta = lit_neg(apply_subst_lit sigma l')) && let mgu_found = unify_literal StringMap.empty l l' in mgu := mgu_found; Option.is_some mgu_found) d
+      List.find (fun l' -> (
+      ldelta = lit_neg(apply_subst_lit sigma l')) && let mgu_found = unify_literal l (lit_neg l') in mgu := mgu_found; Option.is_some mgu_found) d
     with Not_found -> raise (GoToNextRule "no resolution step can be applied")
     in let d = remove_first l' d 
-    in let c = remove_first l c
+    in let c = remove_first ldelta c
     in {state with conflict_closure = Closure (apply_subst_clause (Option.get !mgu) (d @ c), compose sigma delta)}
 
   | _ -> raise (GoToNextRule "cannot apply resolve")
