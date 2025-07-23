@@ -3,7 +3,7 @@ open Unification
 open Exceptions
 
 (** Prints the state *)
-let print_state (state : scl_state) = Printf.printf "State:\n=========================================================\n%s\n\n" (show_scl_state state)
+let print_state (state : scl_state) = Printf.printf "State:\n=========================================================\n%s\n\n" (pretty_state state)
 
 (** These shall be defined before running the prover *)
 let signature : (string * int) list ref = ref []
@@ -143,9 +143,11 @@ let is_true_in_trail (c : clause) (trail : (literal * annot) list) =
 
 (** Auxiliary function for the propagate rule. Attempts to split a given ground clause. *)
 let try_split_ground_clause (c: clause) (trail : (literal * annot) list) = 
+  (* removes duplicated literals *)
   let c = dedup c in
   let splits = remove_one c in
-  try (Some (List.find (fun (c0, _) -> not(is_true_in_trail c0 trail)) splits)) with Not_found -> None
+  (* finds a split such that c0 is false in the trail, and l is undefined in the trail*)
+  try (Some (List.find (fun (c0, l) -> not(is_true_in_trail c0 trail) && not(is_in_trail trail l)) splits)) with Not_found -> None
 
 let fst3 t = match t with a, _, _ -> a
 let snd3 t = match t with _, b, _ -> b
@@ -231,9 +233,13 @@ let skip (state : scl_state) =
     | Top -> failwith "not in conflict state" in
   match state.trail with
   | (l, Level (_)) :: rest -> 
-    if not(List.mem (lit_neg l) d) then {state with trail = rest; decision_level = state.decision_level - 1} else raise (GoToNextRule "nothing to skip")
+    if not(List.mem (lit_neg l) d) then 
+      let _ = Printf.printf "%s is not a member of %s.\n" (pretty_lit (lit_neg l)) (pretty_clause d) in
+      {state with trail = rest; decision_level = state.decision_level - 1} else raise (GoToNextRule "nothing to skip")
   | (l, Pred _) :: rest -> 
-      if not(List.mem l d) then {state with trail = rest} else raise (GoToNextRule "nothing to skip")
+      if not(List.mem l d) then 
+        let _ = Printf.printf "%s is not a member of %s.\n" (pretty_lit l) (pretty_clause d) in
+        {state with trail = rest} else raise (GoToNextRule "nothing to skip")
   | _ -> raise (GoToNextRule "nothing to skip")
 
 (** auxiliary function for factorize, removes first occurrence of x in list l *)
