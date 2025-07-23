@@ -17,7 +17,7 @@ let pp_subst fmt subst =
 
 
 type closure = Top | Bot | Closure of clause * subst [@@deriving show]
-type annot = Level of int | Pred of closure [@@deriving show]
+type annot = Level of int | Pred of closure * int [@@deriving show]
 
 
 type scl_state = {
@@ -74,7 +74,7 @@ let pretty_closure c = match c with
   | Closure (c, s) -> Printf.sprintf "%s * %s" (pretty_clause c) (pretty_subst s)
 let pretty_annot a = match a with
   | Level(k) -> string_of_int k
-  | Pred (c) -> pretty_closure c
+  | Pred (c, _) -> pretty_closure c
 
 let pretty_trail (l : (literal * annot) list) =
   List.map (fun (l, a) -> Printf.sprintf "(%s, %s)" (pretty_lit l) (pretty_annot a)) l |> String.concat ", "

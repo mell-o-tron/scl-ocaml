@@ -19,7 +19,7 @@ let decide (l : literal) (s : subst) (state : scl_state) =
 
 (** gets all the literals in the state*)
 let get_all_literals (state : scl_state) = 
-  List.flatten (state.clauses @ state.learned_clauses)
+  List.flatten (state.learned_clauses @ state.clauses)
 
 (** gets all the free variables of a term*)
 let rec get_all_vars_term (t : term) = match t with
@@ -208,14 +208,14 @@ let try_split_clause (c: clause) (trail : (literal * annot) list) (b : literal)=
     part that is false in the trail and one literal, to be added to the trail -- TODO this is not quite right*)
 let propagate (state : scl_state) =
   try
-    let all_clauses = state.clauses @ state.learned_clauses in
+    let all_clauses = state.learned_clauses @ state.clauses  in
     let result = ref (None, StringMap.empty) in
     let _ = List.find (fun cl -> 
       let split, s = try_split_clause cl state.trail state.limiting_literal in
       result := (split, s); Option.is_some split) all_clauses in 
     let {c0; l; mgu}, s = (Option.get (fst !result)), snd !result in
     let mgu = if Option.is_some mgu then Option.get mgu else failwith "mgu should not be none here" in
-    {state with trail = (l, Pred (Closure(apply_subst_clause mgu (l :: c0), s))) :: state.trail}
+    {state with trail = (l, Pred (Closure(apply_subst_clause mgu (l :: c0), s), state.decision_level)) :: state.trail}
 
   with Not_found -> raise (GoToNextRule "nothing to propagate")
 
@@ -223,7 +223,7 @@ let propagate (state : scl_state) =
 let conflict (state : scl_state) = 
   let aux (state : scl_state) (max_depth) =
     let terms = gen_all_closed_terms max_depth in
-    let vars = List.map (fun c -> get_all_vars_clause c) (state.clauses @ state.learned_clauses) |> List.flatten in
+    let vars = List.map (fun c -> get_all_vars_clause c) (state.learned_clauses @ state.clauses) |> List.flatten in
     let ch = choices terms (List.length vars) in
     let labeled_c = List.map (fun l -> List.mapi (fun i t -> (List.nth vars i, t)) l) ch in
     let substs = List.map (fun l -> StringMap.of_list l) labeled_c in
@@ -251,8 +251,7 @@ let next_decision_literal (state : scl_state) : (literal * subst) =
     let tentative_state = {state with trail = (apply_subst_lit cand_s cand_l, Level (state.decision_level + 1)) :: state.trail;
     decision_level = state.decision_level + 1} in
     let reasonable = try 
-      let s = conflict tentative_state in 
-      print_state s;
+      let _s = conflict tentative_state in 
       false
     with GoToNextRule _ ->  true
   
@@ -328,7 +327,7 @@ let de_apply_subst_lit (s : subst) (l:literal) =
 
 (** resolve rule: applies a resolution step to the conflict clause *)
 let resolve (state : scl_state) = match state.trail with
-  | (ldelta, Pred (Closure(c, delta))) :: _ -> 
+  | (ldelta, Pred (Closure(c, delta), _)) :: _ -> 
     let l = de_apply_subst_lit delta ldelta in
     let sigma, d = match state.conflict_closure with
       | Closure (c, s) -> s, c
@@ -351,19 +350,18 @@ let max_in_list (l : 'a list) : 'a =
   | x :: xs ->
       List.fold_left max x xs
 
-(** finds level of a literal -- TODO check more closely that this never loops*)
-let rec level_of_lit (l : literal) (trail : (literal * annot) list) = 
+(** finds level of a literal *)
+let level_of_lit (l : literal) (trail : (literal * annot) list) = 
   try
     let _, a = List.find (fun (l1, _) -> l1 = l) trail in
     match a with
       | Level k -> k
-      | Pred(Closure(c, sigma)) -> level_of_clause (apply_subst_clause sigma c) (trail)
+      | Pred(Closure(_, _), k) -> k
       | _ -> failwith "should never happen"
   with Not_found -> failwith "cannot find literal"
 
-
 (** finds level of a clause*)
-and level_of_clause (c : clause) (trail : (literal * annot) list) : int = 
+let level_of_clause (c : clause) (trail : (literal * annot) list) : int = 
   max_in_list (List.map (fun l -> level_of_lit l trail) c)
   
 (** finds level of a trail *)
@@ -407,4 +405,3 @@ let backtrack (state : scl_state) =
   let subtrail = min_subtrail state.trail dvl in
   let k = level_of_trail subtrail  in
   {state with trail = subtrail ; learned_clauses = dvl :: state.learned_clauses; decision_level = k; conflict_closure = Top}
-

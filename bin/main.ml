@@ -42,10 +42,10 @@ let _apply_rules (state : scl_state) = match state with
   in 
   aux 0 state
     
-
 let rec keep_applying_rules state = 
   let res = _apply_rules state in
   print_state res;
+  flush stdout;
   let _ = read_line () in
   keep_applying_rules res
 
