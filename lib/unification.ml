@@ -97,19 +97,28 @@ let rec unify_equalities (eqs : (term * term) list) =
   if res = eqs then (Some res) else unify_equalities res
   with CannotUnify -> None
 
-let unify_literal l1 l2 = 
-
-  Printf.printf "trying to unify literals: %s, %s\n" (pretty_lit l1) (pretty_lit l2);
-
-let pairlistopt = match l1, l2 with
+let unify_lits_to_pair l1 l2 = match l1, l2 with
 | Pos (Atom (n1, tl1)), Pos (Atom (n2, tl2)) when 
   n1 = n2 && List.length tl1 = List.length tl2 -> unify_equalities (List.map2 (fun t1 t2 -> (t1, t2)) tl1 tl2)
 | Neg (Atom (n1, tl1)), Neg (Atom (n2, tl2)) when 
   n1 = n2 && List.length tl1 = List.length tl2 -> unify_equalities (List.map2 (fun t1 t2 -> (t1, t2)) tl1 tl2)
 | _ -> None
 
+let unify_literal l1 l2 = 
+  (* Printf.printf "trying to unify literals: %s, %s\n" (pretty_lit l1) (pretty_lit l2); *)
+let pairlistopt = unify_lits_to_pair l1 l2
+
 in if Option.is_some pairlistopt then 
   let listopt = Option.get pairlistopt in
   let listopt = List.map (fun (t1, t2) -> (get_var_name t1, t2)) listopt in
   Some (listopt |> StringMap.of_list)
+else None
+
+let unify_literal_with_lits (l1 : literal) (c : clause) = 
+  let lis = List.map (fun l -> unify_lits_to_pair l1 l) c in
+  let pairlistopt = if List.for_all Option.is_some lis then Some(List.map Option.get lis |> List.flatten) else None in
+  if Option.is_some pairlistopt then 
+    let listopt = Option.get pairlistopt in
+    let listopt = List.map (fun (t1, t2) -> (get_var_name t1, t2)) listopt in
+    Some (listopt |> StringMap.of_list)
 else None

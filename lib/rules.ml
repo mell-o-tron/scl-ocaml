@@ -116,14 +116,6 @@ let is_in_trail (trail : (literal * annot) list) (l : literal) =
   List.mem l trail || List.mem (lit_neg (l)) trail
 
 
-(** Auxiliary function for the decision rule. Returns an undecided literal that is < beta *)
-let next_decision_literal (state : scl_state) : (literal * subst) = 
-  let all_literals = get_all_literals state in
-  let gnd = List.map (fun l -> gen_all_closed_literals_leq_b l state.limiting_literal) all_literals |> List.flatten in
-  let all_new_literals = List.filter (fun (l, _) -> not (is_in_trail state.trail l)) gnd in
-  try List.hd all_new_literals with _ ->  raise (GoToNextRule "all decision literals leq beta are in trail")
-
-
 (** Auxiliary function for the propagate rule. Returns all the lists that can by obtained
     by removing one element from a list. *)
 let remove_one (l : 'a list) : ('a list * 'a) list =
@@ -139,24 +131,38 @@ let remove_one (l : 'a list) : ('a list * 'a) list =
 (** Checks whether a clause is true in a trail*)
 let is_true_in_trail (c : clause) (trail : (literal * annot) list) =
   let trail = List.map (fun (l, _) -> l) trail in
-  List.for_all (fun l -> List.mem l trail || not (List.mem (lit_neg l) trail)) c
+  List.exists (fun l -> List.mem l trail) c
+
+let is_false_in_trail (c : clause) (trail : (literal * annot) list) =
+  let trail = List.map (fun (l, _) -> l) trail in
+  List.for_all (fun l -> List.mem (lit_neg l) trail) c
+
+let equal_mod_s s l1 l2 = (apply_subst_lit s l1 = apply_subst_lit s l2)
+
+type split = {c0 : clause ; l : literal ; mgu : subst option}
 
 (** Auxiliary function for the propagate rule. Attempts to split a given ground clause. *)
 let try_split_ground_clause (c: clause) (s : subst) (trail : (literal * annot) list) = 
   (* removes duplicated literals *)
   let c = dedup c in
-  
+
+  if List.length c < 2 then None else
+
   (* singles out one literal from the clause *)
   let splits : (clause * literal) list = remove_one c in
-
   (* for each split (c, l), finds the terms in c that are equal to l mod sigma, removes them *)
   let remove_equal_mod_s ((c, l) : clause * literal) = 
-    let equal_mod_s l1 l2 = (apply_subst_lit s l1 = apply_subst_lit s l2) in
-    (List.filter (fun l' -> not(equal_mod_s l l')) c, l)
+    (List.filter (fun l' -> not(equal_mod_s s l l')) c, l)
   in
   let splits = List.map remove_equal_mod_s splits in
   (* finds a split such that c0 is false in the trail, and l is undefined in the trail*)
-  try (Some (List.find (fun (c0, l) -> not(is_true_in_trail c0 trail) && not(is_in_trail trail l)) splits)) with Not_found -> None
+  try 
+  let c0, l = (List.find (fun (c0, l) -> is_false_in_trail c0 trail && not(is_in_trail trail l)) splits) in
+  let c1 = List.filter (equal_mod_s s l) c in 
+  let mgu = unify_literal_with_lits l c1 in
+  Some {c0 = c0; l = l; mgu = mgu}
+
+  with Not_found -> None
 
 let fst3 t = match t with a, _, _ -> a
 let snd3 t = match t with _, b, _ -> b
@@ -207,9 +213,9 @@ let propagate (state : scl_state) =
     let _ = List.find (fun cl -> 
       let split, s = try_split_clause cl state.trail state.limiting_literal in
       result := (split, s); Option.is_some split) all_clauses in 
-    let (c0, l), s = (Option.get (fst !result)), snd !result in
-    {state with trail = (l, Pred (Closure(l :: c0, s))) :: state.trail}
-
+    let {c0; l; mgu}, s = (Option.get (fst !result)), snd !result in
+    let mgu = if Option.is_some mgu then Option.get mgu else failwith "mgu should not be none here" in
+    {state with trail = (l, Pred (Closure(apply_subst_clause mgu (l :: c0), s))) :: state.trail}
 
   with Not_found -> raise (GoToNextRule "nothing to propagate")
 
@@ -225,13 +231,36 @@ let conflict (state : scl_state) =
     (* Does one of these substitutions bring to a conflict? *)
     try
       let d = ref [] in
-      let s = List.find (fun s -> List.exists (fun c -> d := c; not(is_true_in_trail (apply_subst_clause s c) state.trail)) (state.clauses @ state.learned_clauses)) substs in
+      let s = List.find (fun s -> List.exists (fun c -> d := c; is_false_in_trail (apply_subst_clause s c) state.trail) (state.clauses @ state.learned_clauses)) substs in
       Some {state with conflict_closure = Closure(!d, s)}
     with Not_found -> None
   in
-
   (* TODO How to limit the depth? Also use beta? *)
   try Option.get (aux state 10) with _ -> raise (GoToNextRule "could not create conflict")
+
+
+(** Auxiliary function for the decision rule. Returns an undecided literal that is < beta *)
+let next_decision_literal (state : scl_state) : (literal * subst) = 
+  let rec aux (excluded : literal list) = 
+    let all_literals = get_all_literals state in
+    let gnd = List.map (fun l -> gen_all_closed_literals_leq_b l state.limiting_literal) all_literals |> List.flatten in
+    let all_new_literals = List.filter (fun (l, _) -> not (is_in_trail state.trail l) && not (List.mem l excluded)) gnd in
+    try 
+    let cand_l, cand_s = List.hd all_new_literals in
+    (* ensures run is reasonable by checking if conflict rule is allowed *)
+    let tentative_state = {state with trail = (apply_subst_lit cand_s cand_l, Level (state.decision_level + 1)) :: state.trail;
+    decision_level = state.decision_level + 1} in
+    let reasonable = try 
+      let s = conflict tentative_state in 
+      print_state s;
+      false
+    with GoToNextRule _ ->  true
+  
+    in if reasonable then cand_l, cand_s else aux (cand_l :: excluded)
+
+    with _ ->  raise (GoToNextRule "all decision literals leq beta are in trail") in
+  
+  aux ([])
 
 let clause_mem l c = List.mem l c
 
@@ -263,18 +292,20 @@ let remove_first (x : 'a) (l : 'a list) : 'a list =
   in
   aux [] l
 
+(* TODO factorize rule is broken *)
+
 (** factorize rule*)
 let factorize (state : scl_state) = 
   let s, c = match state.conflict_closure with
     | Closure (c, s) -> s, c
     | Bot -> failwith "cannot recover"
     | Top -> failwith "not in conflict state" in
-  let c = c |> dedup in
+  (* let c = c |> dedup in *)
   (* for each pair of literals, check if they can be unified and unify them *)
   let mgu = ref None in
-  let l1 = try (List.find (fun l1 -> List.exists (fun l2 -> l2 != l1 && (
+  let l1 = try (List.find (fun l1 -> List.exists (fun l2 -> (
   let mgu_found = (unify_literal l1 l2) in  
-    mgu := mgu_found ; Option.is_some mgu_found) ) c) c) with Not_found -> raise (GoToNextRule "could not factorize") in
+    mgu := mgu_found ; Option.is_some mgu_found) ) (remove_first l1 c)) c) with Not_found -> raise (GoToNextRule "could not factorize") in
 
   let d = remove_first l1 c in 
   {state with conflict_closure = Closure (apply_subst_clause (Option.get !mgu) d, s)}

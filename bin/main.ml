@@ -3,9 +3,9 @@ open Scl.Rules
 open Scl.Exceptions
 
 let seek_conflict_rules : ((scl_state -> scl_state) list) = [
-  (fun state -> (Printf.printf("applying rule propagate\n"); propagate state));
   (fun state -> (Printf.printf("applying rule conflict\n"); conflict state)) ;
-  (fun state -> (Printf.printf("applying rule decision\n"); 
+  (fun state -> (Printf.printf("applying rule propagate\n"); propagate state));
+  (fun state -> (Printf.printf("applying rule decide\n"); 
     let decision_literal, s = next_decision_literal (state) in
     Printf.printf "decided literal: %s\n" (pretty_lit decision_literal);
     decide decision_literal s state))
