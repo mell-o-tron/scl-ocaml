@@ -4,4 +4,4 @@ This is a (work in progress) implementation of the [SCL calculus](https://arxiv.
 
 ### How to execute
 
-It currently does not work very well, but it can be ran using the `dune exec` command. Make sure to have dune installed, and use the `opam install . --deps-only` command to install the dependencies of the project.
+The program can be executed using the `dune exec` command. Make sure to have dune installed, and use the `opam install . --deps-only` command to install the dependencies of the project.
