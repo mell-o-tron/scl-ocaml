@@ -1,4 +1,4 @@
 (lang dune 3.18)
 (name scl)
-(sections (lib .) (bin ../../bin))
-(files (lib (META dune-package opam)) (bin (scl)))
+(sections (lib .) (bin ../../bin) (doc ../../doc/scl))
+(files (lib (META dune-package opam)) (bin (scl)) (doc (README.md)))

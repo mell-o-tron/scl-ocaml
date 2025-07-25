@@ -137,6 +137,10 @@ let is_false_in_trail (c : clause) (trail : (literal * annot) list) =
   let trail = List.map (fun (l, _) -> l) trail in
   List.for_all (fun l -> List.mem (lit_neg l) trail) c
 
+let not_in_trail_clause (c : clause) (trail : (literal * annot) list) =
+  let trail = List.map (fun (l, _) -> l) trail in
+  List.for_all (fun l -> not(List.mem (l) trail) ) c
+
 let equal_mod_s s l1 l2 = (apply_subst_lit s l1 = apply_subst_lit s l2)
 
 type split = {c0 : clause ; l : literal ; mgu : subst option}
@@ -146,7 +150,13 @@ let try_split_ground_clause (c: clause) (s : subst) (trail : (literal * annot) l
   (* removes duplicated literals *)
   let c = dedup c in
 
-  if List.length c < 2 then None else
+  if List.length c == 0 then None 
+  else if List.length c == 1 then 
+    let l = (List.hd c) in
+    if not(is_in_trail trail (apply_subst_lit s l)) then 
+      Some {c0 = []; l = l; mgu = Some StringMap.empty}
+    else None
+  else
 
   (* singles out one literal from the clause *)
   let splits : (clause * literal) list = remove_one c in
@@ -157,7 +167,7 @@ let try_split_ground_clause (c: clause) (s : subst) (trail : (literal * annot) l
   let splits = List.map remove_equal_mod_s splits in
   (* finds a split such that c0 is false in the trail, and l is undefined in the trail*)
   try 
-  let c0, l = (List.find (fun (c0, l) -> is_false_in_trail c0 trail && not(is_in_trail trail l)) splits) in
+  let c0, l = (List.find (fun (c0, l) -> is_false_in_trail (apply_subst_clause s c0) trail && not(is_in_trail trail (apply_subst_lit s l))) splits) in
   let c1 = List.filter (equal_mod_s s l) c in 
   let mgu = unify_literal_with_lits l c1 in
   Some {c0 = c0; l = l; mgu = mgu}
@@ -172,12 +182,16 @@ let thrd3 t = match t with _, _, c -> c
 (** Auxiliary function for the propagate rule. Attempts to split a given non-ground clause. *)
 let try_split_clause (c: clause) (trail : (literal * annot) list) (b : literal)= 
   let aux (max_depth) = 
+    (** generate all #{FV(c)}-ples of ground terms up to max depth *)
     let terms = gen_all_closed_terms max_depth in
     let vars = get_all_vars_clause c in
     let ch = choices terms (List.length vars) in
+    (** turn choices into lists of substitutions - first as lists, then converted to maps *)
     let labeled_c = List.map (fun l -> List.mapi (fun i t -> (List.nth vars i, t)) l) ch in
     let substs = List.map (fun l -> StringMap.of_list l) labeled_c in
-    let gnd = List.map (fun s -> (apply_subst_clause s c, s)) substs in
+    (** Generate all ground terms (as pairs <non_ground, grounding subst>) of depth up to max depth *)
+    let gnd = List.map (fun s -> (c, s)) substs in
+    (** filter them, to obtain only those <= beta *)
     let gndleqb = List.filter (fun (l1, _) -> (!clause_ordering l1 [b]) <= 0) gnd in
     try 
       let result = ref None in
@@ -215,24 +229,33 @@ let propagate (state : scl_state) =
       result := (split, s); Option.is_some split) all_clauses in 
     let {c0; l; mgu}, s = (Option.get (fst !result)), snd !result in
     let mgu = if Option.is_some mgu then Option.get mgu else failwith "mgu should not be none here" in
-    {state with trail = (l, Pred (Closure(apply_subst_clause mgu (l :: c0), s), state.decision_level)) :: state.trail}
+    let smgu = compose mgu s in
+    {state with trail = ((apply_subst_lit smgu l), Pred (Closure((l :: c0), smgu), state.decision_level)) :: state.trail}
 
   with Not_found -> raise (GoToNextRule "nothing to propagate")
+
+let restrict_subst_to_c (s : subst) (c : clause) = 
+  let vars = get_all_vars_clause c in
+  let l = StringMap.to_list s |> List.filter (fun (x, _) -> List.mem x vars) in
+  StringMap.of_list l
+
 
 (** Conflict rule: looks for a clause that is false in the trail for some grounding substitution*)
 let conflict (state : scl_state) = 
   let aux (state : scl_state) (max_depth) =
+    (** get all (FV(state))-ples of gnd terms with max depth *)
     let terms = gen_all_closed_terms max_depth in
     let vars = List.map (fun c -> get_all_vars_clause c) (state.learned_clauses @ state.clauses) |> List.flatten in
     let ch = choices terms (List.length vars) in
+    (** Transform them into substitutions *)
     let labeled_c = List.map (fun l -> List.mapi (fun i t -> (List.nth vars i, t)) l) ch in
     let substs = List.map (fun l -> StringMap.of_list l) labeled_c in
 
     (* Does one of these substitutions bring to a conflict? *)
     try
       let d = ref [] in
-      let s = List.find (fun s -> List.exists (fun c -> d := c; is_false_in_trail (apply_subst_clause s c) state.trail) (state.clauses @ state.learned_clauses)) substs in
-      Some {state with conflict_closure = Closure(!d, s)}
+      let s = List.find (fun s -> List.exists (fun c -> d := c; is_false_in_trail (apply_subst_clause s c) state.trail) (state.learned_clauses @ state.clauses)) substs in
+      Some {state with conflict_closure = Closure(!d, restrict_subst_to_c s !d)}
     with Not_found -> None
   in
   (* TODO How to limit the depth? Also use beta? *)
@@ -302,7 +325,7 @@ let factorize (state : scl_state) =
   (* let c = c |> dedup in *)
   (* for each pair of literals, check if they can be unified and unify them *)
   let mgu = ref None in
-  let l1 = try (List.find (fun l1 -> List.exists (fun l2 -> (
+  let l1 = try (List.find (fun l1 -> List.exists (fun l2 -> (equal_mod_s s l1 l2 &&
   let mgu_found = (unify_literal l1 l2) in  
     mgu := mgu_found ; Option.is_some mgu_found) ) (remove_first l1 c)) c) with Not_found -> raise (GoToNextRule "could not factorize") in
 
@@ -336,11 +359,11 @@ let resolve (state : scl_state) = match state.trail with
     let mgu = ref None in
     let l' = try
       List.find (fun l' -> (
-      ldelta = lit_neg(apply_subst_lit sigma l')) && let mgu_found = unify_literal l (lit_neg l') in mgu := mgu_found; Option.is_some mgu_found) d
+      ldelta = lit_neg(apply_subst_lit delta l')) && let mgu_found = unify_literal l (lit_neg l') in mgu := mgu_found; Option.is_some mgu_found) d
     with Not_found -> raise (GoToNextRule "no resolution step can be applied")
     in let d = remove_first l' d 
-    in let c = remove_first ldelta c
-    in {state with conflict_closure = Closure (apply_subst_clause (Option.get !mgu) (d @ c), compose sigma delta)}
+    in let c = remove_first l c
+    in {state with conflict_closure = Closure ((d @ c), compose (compose sigma delta) (Option.get !mgu)) }
 
   | _ -> raise (GoToNextRule "cannot apply resolve")
 

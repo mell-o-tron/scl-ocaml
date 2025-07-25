@@ -7,8 +7,8 @@ let rec apply_subst_term (s : subst) (t : term) = match t with
   | Func (n, tl) -> Func (n, List.map (apply_subst_term s) tl)
   | Const _ -> t
 
-(** sigma2 AFTER sigma1 *)
-let compose (sigma2 : subst) (sigma1 : subst) : subst =
+(** sigma1 AND THEN sigma2 *)
+let compose (sigma1 : subst) (sigma2 : subst) : subst =
   let sigma1' = StringMap.map (apply_subst_term sigma2) sigma1 in
   StringMap.union (fun _ t1 _ -> Some t1) sigma1' sigma2
 

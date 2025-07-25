@@ -17,7 +17,7 @@ let pp_subst fmt subst =
 
 
 type closure = Top | Bot | Closure of clause * subst [@@deriving show]
-type annot = Level of int | Pred of closure [@@deriving show]
+type annot = Level of int | Pred of closure * int [@@deriving show]
 
 
 type scl_state = {
@@ -50,3 +50,40 @@ let lit_neg (l : literal) = match l with
 
 (** applies a substitution to a clause *)
 let apply_subst_clause (s : subst) (c : clause) = List.map (apply_subst_lit s) c 
+
+let rec pretty_term (t) = match t with
+  | Const s -> s
+  | Var s -> s
+  | Func (s, l) -> Printf.sprintf "%s(%s)" s ((List.map (pretty_term) l) |> String.concat ", ")
+
+let pretty_subst (subst : term StringMap.t) =
+  let pp_binding (k, t) =
+    Printf.sprintf "%s ↦ %s" k (pretty_term t)
+  in
+  "{" ^ (List.map (fun (k, t) -> pp_binding (k, t)) (StringMap.to_list subst) |> String.concat ", ") ^ "}"
+
+
+let pretty_lit (l : literal) = match l with
+  | Pos(Atom (name, l)) -> Printf.sprintf "%s(%s)" name ((List.map (pretty_term) l) |> String.concat ", ")
+  | Neg(Atom (name, l)) -> Printf.sprintf "¬%s(%s)" name ((List.map (pretty_term) l) |> String.concat ", ")
+
+let pretty_clause (c : clause) = ((List.map (pretty_lit) c) |> String.concat " ∨ ")
+let pretty_closure c = match c with
+  | Top -> "⊤"
+  | Bot -> "⊥"
+  | Closure (c, s) -> Printf.sprintf "%s * %s" (pretty_clause c) (pretty_subst s)
+let pretty_annot a = match a with
+  | Level(k) -> string_of_int k
+  | Pred (c, _) -> pretty_closure c
+
+let pretty_trail (l : (literal * annot) list) =
+  List.map (fun (l, a) -> Printf.sprintf "(%s, %s)" (pretty_lit l) (pretty_annot a)) l |> String.concat ", "
+
+let pretty_state (state : scl_state) = 
+  Printf.sprintf "Γ:\t\t%s\nclauses:\t%s\nlearned:\t%s\nβ:\t\t%s\nlevel:\t\t%d\nconflict:\t%s\n" 
+    (pretty_trail state.trail) 
+    (List.map (pretty_clause) state.clauses |> String.concat ", ")
+    (List.map (pretty_clause) state.learned_clauses |> String.concat ", ")
+    (pretty_lit state.limiting_literal)
+    (state.decision_level)
+    (pretty_closure state.conflict_closure)

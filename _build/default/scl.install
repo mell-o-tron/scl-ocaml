@@ -6,3 +6,6 @@ lib: [
 bin: [
   "_build/install/default/bin/scl"
 ]
+doc: [
+  "_build/install/default/doc/scl/README.md"
+]
