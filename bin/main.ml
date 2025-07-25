@@ -2,6 +2,7 @@ open Scl.Ast
 open Scl.Rules
 open Scl.Exceptions
 
+(** List of rules for seeking conflicts. *)
 let seek_conflict_rules : ((scl_state -> scl_state) list) = [
   (fun state -> (Printf.printf("applying rule conflict\n"); conflict state)) ;
   (fun state -> (Printf.printf("applying rule propagate\n"); propagate state));
@@ -11,6 +12,7 @@ let seek_conflict_rules : ((scl_state -> scl_state) list) = [
     decide decision_literal s state))
 ]
 
+(** List of rules for solving conflicts. *)
 let solve_conflict_rules : ((scl_state -> scl_state) list) = [
   (fun state ->  Printf.printf("applying rule skip\n"); skip state) ;
   (fun state ->  Printf.printf("applying rule factorize\n"); factorize state);
@@ -18,7 +20,8 @@ let solve_conflict_rules : ((scl_state -> scl_state) list) = [
   (fun state -> Printf.printf("applying rule backtrack\n"); backtrack state)
 ]
 
-let _apply_rules (state : scl_state) = match state with
+(** Applies a rule to the state; if one rule cannot be applied, fall back to the next one. *)
+let apply_rule (state : scl_state) = match state with
   | {conflict_closure = Top; _ } -> 
     let rec aux n state =
       try (
@@ -26,7 +29,7 @@ let _apply_rules (state : scl_state) = match state with
           List.nth (seek_conflict_rules) n state
         else 
           state
-      ) with GoToNextRule _ -> aux (n+1) state
+      ) with GoToNextRule s -> Printf.printf "   -> %s\n\n" s; aux (n+1) state
     in 
     aux 0 state
 
@@ -38,13 +41,13 @@ let _apply_rules (state : scl_state) = match state with
         List.nth (solve_conflict_rules) n state
       else 
         state
-    ) with GoToNextRule _ -> aux (n+1) state
+    ) with GoToNextRule s -> Printf.printf "   -> %s\n\n" s; aux (n+1) state
   in 
   aux 0 state
     
 let rec keep_applying_rules state = 
   try
-    let res = _apply_rules state in
+    let res = apply_rule state in
     print_state res;
     flush stdout;
     (* let _ = read_line () in *)

@@ -392,10 +392,16 @@ let level_of_trail (trail : (literal * annot) list) = match trail with
   | (l, _) :: _ -> level_of_lit l trail
   | _ -> 0
 
-let rec prefix n l =
-    match (n, l) with
-  | (0, _) | (_, []) -> []
-  | (n, x :: xs) -> x :: prefix (n - 1) xs
+let suffix l n =
+  let len = List.length l in
+  let to_drop = if n > len then 0 else len - n in
+  let rec drop l k =
+    if k = 0 then l
+    else match l with
+      | []      -> []
+      | _::tl   -> drop tl (k - 1)
+  in
+  drop l to_drop
 
 (** finds smallest maximal trail subsequence such that exists substitution that makes c true *)
 let min_subtrail (trail : (literal * annot) list) (c : clause) =  
@@ -405,14 +411,15 @@ let aux (trail : (literal * annot) list) (max_depth) =
   let ch = choices terms (List.length vars) in
   let labeled_c = List.map (fun l -> List.mapi (fun i t -> (List.nth vars i, t)) l) ch in
   let substs = List.map (fun l -> StringMap.of_list l) labeled_c in
+  (* does there exist a substitution that makes C true in the trail?*)
   List.exists (fun s -> is_true_in_trail (apply_subst_clause s c) trail) substs
 in 
 let result = ref None in
+  (* for i in {1 ... len - 1}, check if any suffix of the trail satisfies aux. *)
   for i = 1 to List.length trail - 1 do
-    Printf.printf "%s\n" (if aux (prefix i trail) 10 then "true" else "false");
     (* TODO figure out how to limit depth properly *)
-    if aux (prefix i trail) 10 && not(aux (prefix (i+1) trail) 10) && Option.is_none !result then
-      result := Some (prefix i trail)
+    if aux (suffix trail i) 10 && not(aux (suffix trail (i+1)) 10) && Option.is_none !result then
+      result := Some (suffix trail i)
   done;
   (* if no subtrail is found, the subtrail defaults to empty *)
   if Option.is_none !result then [] else Option.get !result
