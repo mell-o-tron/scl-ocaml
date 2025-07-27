@@ -1,6 +1,7 @@
 open Ast
 open Unification
 open Exceptions
+open Rewriting
 
 (** Prints the state *)
 let print_state (state : scl_state) = Printf.printf "State:\n=========================================================\n%s\n\n" (pretty_state state)
@@ -21,50 +22,6 @@ let decide (l : literal) (s : subst) (state : scl_state) =
 let get_all_literals (state : scl_state) = 
   List.flatten (state.learned_clauses @ state.clauses)
 
-(** gets all the free variables of a term*)
-let rec get_all_vars_term (t : term) = match t with
-  | Var v -> [v]
-  | Func (_, tl) -> List.map (get_all_vars_term) tl |> List.flatten
-  | Const _ -> []
-
-(** gets all the free variables of an atom*)
-let get_all_vars_atom (Atom(_, tl)) =  List.map (get_all_vars_term) tl |> List.flatten
-
-(** gets all the free variables of a literal *)
-let get_all_vars_literal (l : literal) = match l with
-  | Pos a -> get_all_vars_atom a
-  | Neg a -> get_all_vars_atom a
-
-(** Deduplicates a list *)
-let dedup (l : 'a list) : 'a list =
-  List.fold_left
-    (fun acc x ->
-       if List.mem x acc then
-         acc
-       else
-         acc @ [x]
-    )
-    []
-    l
-
-
-(** gets all the free variables of a clause*)
-let get_all_vars_clause (c : clause) = 
-  List.map (fun l -> get_all_vars_literal l) c |> List.flatten |> dedup
-
-(** Combinatorial function, returns the n-choices of a list l *)
-let rec choices l n = 
-  if n < 0 then
-    invalid_arg "choices: n must be non-negative"
-  else if n = 0 then
-    [ [] ]
-  else
-    List.concat_map
-      (fun x ->
-         List.map (fun tail -> x :: tail)
-                  (choices l (n - 1))
-      )
-      l
 
 (** generalization of map2 for n elements *)
 let rec mapn (f : 'a list -> 'b) (lists : 'a list list) : 'b list =
@@ -392,10 +349,16 @@ let level_of_trail (trail : (literal * annot) list) = match trail with
   | (l, _) :: _ -> level_of_lit l trail
   | _ -> 0
 
-let rec prefix n l =
-    match (n, l) with
-  | (0, _) | (_, []) -> []
-  | (n, x :: xs) -> x :: prefix (n - 1) xs
+let suffix l n =
+  let len = List.length l in
+  let to_drop = if n > len then 0 else len - n in
+  let rec drop l k =
+    if k = 0 then l
+    else match l with
+      | []      -> []
+      | _::tl   -> drop tl (k - 1)
+  in
+  drop l to_drop
 
 (** finds smallest maximal trail subsequence such that exists substitution that makes c true *)
 let min_subtrail (trail : (literal * annot) list) (c : clause) =  
@@ -405,14 +368,15 @@ let aux (trail : (literal * annot) list) (max_depth) =
   let ch = choices terms (List.length vars) in
   let labeled_c = List.map (fun l -> List.mapi (fun i t -> (List.nth vars i, t)) l) ch in
   let substs = List.map (fun l -> StringMap.of_list l) labeled_c in
+  (* does there exist a substitution that makes C true in the trail?*)
   List.exists (fun s -> is_true_in_trail (apply_subst_clause s c) trail) substs
 in 
 let result = ref None in
+  (* for i in {1 ... len - 1}, check if any suffix of the trail satisfies aux. *)
   for i = 1 to List.length trail - 1 do
-    Printf.printf "%s\n" (if aux (prefix i trail) 10 then "true" else "false");
     (* TODO figure out how to limit depth properly *)
-    if aux (prefix i trail) 10 && not(aux (prefix (i+1) trail) 10) && Option.is_none !result then
-      result := Some (prefix i trail)
+    if aux (suffix trail i) 10 && not(aux (suffix trail (i+1)) 10) && Option.is_none !result then
+      result := Some (suffix trail i)
   done;
   (* if no subtrail is found, the subtrail defaults to empty *)
   if Option.is_none !result then [] else Option.get !result

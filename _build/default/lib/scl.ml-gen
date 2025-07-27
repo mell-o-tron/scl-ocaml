@@ -6,6 +6,12 @@ module Ast = Scl__Ast
 (** @canonical Scl.Exceptions *)
 module Exceptions = Scl__Exceptions
 
+(** @canonical Scl.Kbo *)
+module Kbo = Scl__Kbo
+
+(** @canonical Scl.Rewriting *)
+module Rewriting = Scl__Rewriting
+
 (** @canonical Scl.Rules *)
 module Rules = Scl__Rules
 

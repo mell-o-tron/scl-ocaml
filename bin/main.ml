@@ -1,6 +1,7 @@
 open Scl.Ast
 open Scl.Rules
 open Scl.Exceptions
+open Scl.Kbo
 
 (** List of rules for seeking conflicts. *)
 let seek_conflict_rules : ((scl_state -> scl_state) list) = [
@@ -82,16 +83,10 @@ let main () =
 let _test () = 
 
   signature := [("a", 0); ("b", 0)];
-  (* Placeholder: this should be something like unit-weight KBO in complete implementation *)
-  literal_ordering := (fun _ l2 -> ( 
-    if l2 = Pos(Atom("R", [Const ("b")])) then -1
-    else failwith "illegal comparison, second argument is not beta."
-  ));
-  (* Placeholder: this should be something like unit-weight KBO in complete implementation *)
-  clause_ordering := (fun _ c2 -> ( 
-    if c2 = [Pos(Atom("R", [Const ("b")]))] then -1
-    else failwith "illegal comparison, second argument is not [beta]."
-  ));
+  let precedence = ["R"; "Q"; "P"; "b"; "a"] in
+  term_ordering := kbo_cmp (StringMap.of_list ["a", 1 ; "b", 1]) (!signature) precedence;
+  literal_ordering := kbo_lits_cmp (StringMap.of_list ["a", 1 ; "b", 1; "P", 1; "Q", 1; "R", 1]) (!signature) precedence;
+  clause_ordering := kbo_clauses_cmp (StringMap.of_list ["a", 1 ; "b", 1; "P", 1; "Q", 1; "R", 1]) (!signature) precedence;
 
   let n =  [[Pos (Atom("P", [Var "x"])); Pos (Atom("Q", [Const "b"]))];
   [Pos (Atom("P", [Var "x"])); Neg (Atom("Q", [Var "y"]))];
