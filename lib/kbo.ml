@@ -18,10 +18,10 @@ let term_weight (w : int StringMap.t) (signature : (string * int) list) (t : ter
   sum_list weighted_occs + (dedup v |> List.length)
 
 let variable_inclusion_req (t1 : term) (t2 : term) =
-  List.for_all (fun x -> List.length (all_occurrences x t1) >= List.length (all_occurrences x t2)) (get_all_vars_term t1 @ get_all_vars_term t2 |> dedup)
+  List.for_all (fun x -> List.length (all_occurrences x t1) >= List.length (all_occurrences x t2)) ((get_all_vars_term t1 @ get_all_vars_term t2) |> dedup)
 
 let has_precedence (precedence : string list) n1 n2 = 
-  List.find_index (fun s -> s = n1) precedence > List.find_index (fun s -> s = n2) precedence
+  List.find_index (fun s -> s = n1) precedence < List.find_index (fun s -> s = n2) precedence
 
 let rec lex_compare (w : int StringMap.t) (signature : (string * int) list) (precedence : string list) l1 l2 = match l1, l2 with
 | t1 :: l1, t2 :: l2 -> if t1 == t2 then lex_compare w signature precedence l1 l2 else
@@ -41,6 +41,7 @@ and kbo_gt (w : int StringMap.t) (signature : (string * int) list) (precedence :
   | Func (n1, _), Func (n2, _)
   | Const n1, Const n2 when not(n1 = n2) -> 
      (* The literal ordering is defined by which comes first in the precedence list *)
+     (* Printf.printf "%s %s on %s\n" n1 (if has_precedence precedence n1 n2 then "has prec" else "hasn't prec") n2; *)
       has_precedence precedence n1 n2
   | Func (_, l1), Func (_, l2) -> 
     lex_compare w signature precedence l1 l2
