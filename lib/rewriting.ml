@@ -45,3 +45,5 @@ let get_all_vars_literal (l : literal) = match l with
 let get_all_vars_clause (c : clause) = 
   List.map (fun l -> get_all_vars_literal l) c |> List.flatten |> dedup
 
+let get_all_vars_state (state : scl_state) = 
+  List.map (get_all_vars_clause) state.clauses |> List.flatten
