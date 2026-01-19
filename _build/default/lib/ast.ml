@@ -29,6 +29,12 @@ type scl_state = {
   conflict_closure : closure
 } [@@deriving show]
 
+type rule_result =
+  | R_State of scl_state
+  | R_Continue of scl_state
+  | R_Sat of (literal * annot) list
+  | R_Unsat
+
 (** applies a substitution to a term*)
 let rec apply_subst_term (s : subst) (t : term) = match t with
   | Var v -> (try StringMap.find v s with _ -> Var v)

@@ -3,6 +3,7 @@ open Scl.Rules
 open Scl.Exceptions
 open Scl.Kbo
 open Scl.Rewriting
+open Scl.Guarded
 
 (** List of rules for seeking conflicts. *)
 let seek_conflict_rules : ((scl_state -> rule_result) list) = [
@@ -61,10 +62,13 @@ let check_sat state =
   if(List.for_all (fun x -> List.mem x vars_in_s) vars) then
     let s = get_subst_from_trail state.trail in
     Printf.printf "subst from trail: %s\n" (pretty_subst s);
-    List.for_all (fun c -> is_true_in_trail (apply_subst_clause s c) state.trail) state.clauses
+    List.for_all (fun c -> 
+      let c1 = (apply_subst_clause s c) in
+      Printf.printf "checking if clause %s is true in trail %s\n" (pretty_clause c1) (pretty_trail state.trail);
+      is_true_in_trail (apply_subst_clause s c1) state.trail) state.clauses
   else false
 
-let rec keep_applying_rules state = 
+let rec _keep_applying_rules state = 
     let res = apply_rule state in
     match res with 
     | R_State s ->
@@ -74,7 +78,7 @@ let rec keep_applying_rules state =
       if check_sat s then 
         print_endline "Found satisfying interpretation"
       else 
-      keep_applying_rules s
+      _keep_applying_rules s
 
     | R_Unsat -> print_endline "Refutation Found"
     | R_Sat _ -> print_endline "Found satisfying interpretation"
@@ -97,10 +101,19 @@ let _main () =
              [Pos(Atom("Q", [Const("b")]))]
             ] in
 
-  let _initial_state = {trail = [] ; clauses = _n; learned_clauses = []; limiting_literal = Pos(Atom("R", [Const ("b")]));
+  let _n3 = [[Pos (Atom("P", [Var "x"])) ; Pos (Atom("Q", [Var "x"]))] ; 
+             [Neg (Atom("P", [Var "x"])) ; Neg (Atom("Q", [Var "x"]))]] in
+
+  let _n4 = [[Pos (Atom("P", [Var "x"])) ; Neg (Atom("R", [Var "x"]))] ; 
+             [Pos (Atom("Q", [Var "x"])) ; Pos (Atom("R", [Var "x"]))] ;
+             [Pos (Atom ("Q", [Var "x"]))]] in
+
+  let _initial_state = {trail = [] ; clauses = _n4; learned_clauses = []; limiting_literal = Pos(Atom("R", [Const ("b")]));
                        decision_level = 0 ; conflict_closure = Top} in
 
-  keep_applying_rules _initial_state
+  (* keep_applying_rules _initial_state *)
+
+  guarded_debug_scl _initial_state !literal_ordering (Const "a")
 ;;
 
 let _test () = 

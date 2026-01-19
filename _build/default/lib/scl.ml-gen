@@ -6,6 +6,9 @@ module Ast = Scl__Ast
 (** @canonical Scl.Exceptions *)
 module Exceptions = Scl__Exceptions
 
+(** @canonical Scl.Guarded *)
+module Guarded = Scl__Guarded
+
 (** @canonical Scl.Kbo *)
 module Kbo = Scl__Kbo
 

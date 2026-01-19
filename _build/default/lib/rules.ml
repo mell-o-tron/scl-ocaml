@@ -22,6 +22,11 @@ let decide (l : literal) (s : subst) (state : scl_state) =
 let get_all_literals (state : scl_state) = 
   List.flatten (state.learned_clauses @ state.clauses)
 
+let rec get_subst_from_trail (trail : (literal * annot) list) = match trail with
+  | [] -> StringMap.empty
+  | (_, Pred(Closure(_, s), _)) :: rest -> compose s (get_subst_from_trail rest)
+  | _ :: rest -> (get_subst_from_trail rest)
+  
 
 (** generalization of map2 for n elements *)
 let rec mapn (f : 'a list -> 'b) (lists : 'a list list) : 'b list =
@@ -177,7 +182,7 @@ let try_split_clause (c: clause) (trail : (literal * annot) list) (b : literal)=
 
 (** The propagate rule. Tries to find a grounding substitution to split a clause into a 
     part that is false in the trail and one literal, to be added to the trail -- TODO this is not quite right*)
-let propagate (state : scl_state) =
+let propagate (state : scl_state) : rule_result =
   try
     let all_clauses = state.learned_clauses @ state.clauses  in
     let result = ref (None, StringMap.empty) in
@@ -187,9 +192,13 @@ let propagate (state : scl_state) =
     let {c0; l; mgu}, s = (Option.get (fst !result)), snd !result in
     let mgu = if Option.is_some mgu then Option.get mgu else failwith "mgu should not be none here" in
     let smgu = compose mgu s in
-    {state with trail = ((apply_subst_lit smgu l), Pred (Closure((l :: c0), smgu), state.decision_level)) :: state.trail}
+    R_State {state with trail = ((apply_subst_lit smgu l), Pred (Closure((l :: c0), smgu), state.decision_level)) :: state.trail}
 
-  with Not_found -> raise (GoToNextRule "nothing to propagate")
+  with Not_found -> print_endline "nothing to propagate"; R_Continue state
+
+(** Propagation rule with externally provided literal, rest of the clause and grounding substitution *)
+let guided_propagate (state : scl_state) (l : literal) (c0 : clause) (s : subst) = 
+     {state with trail = ((apply_subst_lit s l), Pred (Closure((l :: c0), s), state.decision_level)) :: state.trail}
 
 let restrict_subst_to_c (s : subst) (c : clause) = 
   let vars = get_all_vars_clause c in
@@ -198,7 +207,7 @@ let restrict_subst_to_c (s : subst) (c : clause) =
 
 
 (** Conflict rule: looks for a clause that is false in the trail for some grounding substitution*)
-let conflict (state : scl_state) = 
+let conflict (state : scl_state) : rule_result = 
   let aux (state : scl_state) (max_depth) =
     (** get all (FV(state))-ples of gnd terms with max depth *)
     let terms = gen_all_closed_terms max_depth in
@@ -216,7 +225,7 @@ let conflict (state : scl_state) =
     with Not_found -> None
   in
   (* TODO How to limit the depth? Also use beta? *)
-  try Option.get (aux state 10) with _ -> raise (GoToNextRule "could not create conflict")
+  try R_State (Option.get (aux state 10)) with _ -> print_endline "could not create conflict"; R_Continue state
 
 
 (** Auxiliary function for the decision rule. Returns an undecided literal that is < beta *)
@@ -230,21 +239,21 @@ let next_decision_literal (state : scl_state) : (literal * subst) =
     (* ensures run is reasonable by checking if conflict rule is allowed *)
     let tentative_state = {state with trail = (apply_subst_lit cand_s cand_l, Level (state.decision_level + 1)) :: state.trail;
     decision_level = state.decision_level + 1} in
-    let reasonable = try 
-      let _s = conflict tentative_state in 
-      false
-    with GoToNextRule _ ->  true
+    let reasonable = 
+      match conflict tentative_state with
+        | R_State _ -> false
+        | _ -> true
   
     in if reasonable then cand_l, cand_s else aux (cand_l :: excluded)
 
-    with _ ->  raise (GoToNextRule "all decision literals leq beta are in trail") in
+    with _ -> raise (GoToNextRule "all decision literals leq beta are in trail") in
   
   aux ([])
 
 let clause_mem l c = List.mem l c
 
 (** Skip rule: if a literal in the trail is not present in the conflict clause, skip it*)
-let skip (state : scl_state) = 
+let skip (state : scl_state) : rule_result = 
 
   let d = match state.conflict_closure with
     | Closure (c, s) -> apply_subst_clause s c
@@ -254,12 +263,13 @@ let skip (state : scl_state) =
   | (l, Level (_)) :: rest -> 
     if not(clause_mem (lit_neg l) d) then 
       let _ = Printf.printf "%s is not a member of %s.\n" (pretty_lit (lit_neg l)) (pretty_clause d) in
-      {state with trail = rest; decision_level = state.decision_level - 1} else raise (GoToNextRule "nothing to skip")
+
+    R_State {state with trail = rest; decision_level = state.decision_level - 1} else (print_endline "nothing to skip" ; R_Continue state)
   | (l, Pred _) :: rest -> 
       if not(clause_mem (lit_neg l) d) then 
         let _ = Printf.printf "%s is not a member of %s.\n" (pretty_lit (lit_neg l)) (pretty_clause d) in
-        {state with trail = rest} else raise (GoToNextRule "nothing to skip")
-  | _ -> raise (GoToNextRule "nothing to skip")
+        R_State {state with trail = rest} else (print_endline "nothing to skip" ; R_Continue state)
+  | _ -> print_endline "nothing to skip" ; R_Continue state
 
 (** auxiliary function for factorize, removes first occurrence of x in list l *)
 let remove_first (x : 'a) (l : 'a list) : 'a list =
@@ -282,12 +292,14 @@ let factorize (state : scl_state) =
   (* let c = c |> dedup in *)
   (* for each pair of literals, check if they can be unified and unify them *)
   let mgu = ref None in
-  let l1 = try (List.find (fun l1 -> List.exists (fun l2 -> (equal_mod_s s l1 l2 &&
+  try
+  let l1 = (List.find (fun l1 -> List.exists (fun l2 -> (equal_mod_s s l1 l2 &&
   let mgu_found = (unify_literal l1 l2) in  
-    mgu := mgu_found ; Option.is_some mgu_found) ) (remove_first l1 c)) c) with Not_found -> raise (GoToNextRule "could not factorize") in
+    mgu := mgu_found ; Option.is_some mgu_found) ) (remove_first l1 c)) c) in
 
   let d = remove_first l1 c in 
-  {state with conflict_closure = Closure (apply_subst_clause (Option.get !mgu) d, s)}
+  R_State {state with conflict_closure = Closure (apply_subst_clause (Option.get !mgu) d, s)}
+  with Not_found -> (print_endline "could not factorize"; R_Continue state)
 
 (** "de-applicates" a substitution, substituting the subterms with the original variable *)
 let de_apply_subst_lit (s : subst) (l:literal) = 
@@ -312,17 +324,19 @@ let resolve (state : scl_state) = match state.trail with
     let sigma, d = match state.conflict_closure with
       | Closure (c, s) -> s, c
       | Bot -> failwith "cannot recover"
-      | Top -> failwith "not in conflict state" in
-    let mgu = ref None in
-    let l' = try
-      List.find (fun l' -> (
-      ldelta = lit_neg(apply_subst_lit delta l')) && let mgu_found = unify_literal l (lit_neg l') in mgu := mgu_found; Option.is_some mgu_found) d
-    with Not_found -> raise (GoToNextRule "no resolution step can be applied")
-    in let d = remove_first l' d 
-    in let c = remove_first l c
-    in {state with conflict_closure = Closure ((d @ c), compose (compose sigma delta) (Option.get !mgu)) }
+      | Top -> failwith "not in conflict state" in (
+      try 
+      let mgu = ref None in
+      let l' =
+        List.find (fun l' -> (
+        ldelta = lit_neg(apply_subst_lit delta l')) && let mgu_found = unify_literal l (lit_neg l') in mgu := mgu_found; Option.is_some mgu_found) d
+      in let d = remove_first l' d 
+      in let c = remove_first l c
+      in R_State {state with conflict_closure = Closure ((d @ c), compose (compose sigma delta) (Option.get !mgu)) }
+      with Not_found -> (print_endline "no resolution step can be applied") ; R_Continue state
+    )
 
-  | _ -> raise (GoToNextRule "cannot apply resolve")
+  | _ -> print_endline "cannot apply resolve" ; R_Continue state
 
 let max_in_list (l : 'a list) : 'a =
   match l with
@@ -391,4 +405,4 @@ let backtrack (state : scl_state) =
   let _l = de_apply_subst_lit sigma lsigma in
   let subtrail = min_subtrail state.trail dvl in
   let k = level_of_trail subtrail  in
-  {state with trail = subtrail ; learned_clauses = dvl :: state.learned_clauses; decision_level = k; conflict_closure = Top}
+  R_State {state with trail = subtrail ; learned_clauses = dvl :: state.learned_clauses; decision_level = k; conflict_closure = Top}

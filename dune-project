@@ -5,9 +5,9 @@
 (generate_opam_files true)
 
 (source
- (github username/reponame))
+ (github mell-o-tron/scl-ocaml))
 
-(authors "Author Name <author@example.com>")
+(authors "mell-o-tron")
 
 (maintainers "Maintainer Name <maintainer@example.com>")
 

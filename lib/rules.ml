@@ -196,6 +196,10 @@ let propagate (state : scl_state) : rule_result =
 
   with Not_found -> print_endline "nothing to propagate"; R_Continue state
 
+(** Propagation rule with externally provided literal, rest of the clause and grounding substitution *)
+let guided_propagate (state : scl_state) (l : literal) (c0 : clause) (s : subst) = 
+     {state with trail = ((apply_subst_lit s l), Pred (Closure((l :: c0), s), state.decision_level)) :: state.trail}
+
 let restrict_subst_to_c (s : subst) (c : clause) = 
   let vars = get_all_vars_clause c in
   let l = StringMap.to_list s |> List.filter (fun (x, _) -> List.mem x vars) in
